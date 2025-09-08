@@ -1,0 +1,29 @@
+# Act configuration for local GitHub Actions testing
+# This file configures act to run OpenEXR WASM workflows locally
+
+# Use Ubuntu 20.04 for consistency with GitHub Actions
+-P ubuntu-latest=catthehacker/ubuntu:act-20.04
+
+# Set default secrets (for local testing only)
+--secret-file .github/secrets/act-secrets
+
+# Environment variables
+--env EMSCRIPTEN_VERSION=3.1.71
+--env NODE_VERSION=20.x
+--env PYTHON_VERSION=3.11
+
+# Platform settings
+--platform ubuntu-latest=catthehacker/ubuntu:act-20.04
+
+# Resource limits for local testing
+--memory 8g
+--cpus 4
+
+# Verbose output for debugging
+--verbose
+
+# Skip job dependencies that require external services
+--job build-variants
+
+# Cache directories for faster subsequent runs
+--bind /tmp/act-cache:/cache

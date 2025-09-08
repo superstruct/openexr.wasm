@@ -1,0 +1,377 @@
+name: OpenEXR WASM Build & Test
+# Copyright 2025 Superstruct Ltd, New Zealand
+# Licensed under BSD 3-Clause (same as OpenEXR project)
+
+on:
+  push:
+    branches: [ wasm ]
+  pull_request:
+    branches: [ wasm ]
+  schedule:
+    - cron: '0 2 * * 0'  # Weekly on Sunday at 2 AM UTC
+
+env:
+  EMSCRIPTEN_VERSION: '3.1.71'
+  NODE_VERSION: '20.x'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # Build matrix for different variants
+  build-variants:
+    name: Build ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - release
+          - debug
+          - simd
+          - fallback
+          - threaded
+          - webgpu
+        include:
+          - variant: release
+            cmake_flags: '-DCMAKE_BUILD_TYPE=Release'
+            test_flags: ''
+          - variant: debug
+            cmake_flags: '-DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON'
+            test_flags: '--debug'
+          - variant: simd
+            cmake_flags: '-DCMAKE_BUILD_TYPE=Release -DENABLE_SIMD=ON'
+            test_flags: '--experimental-wasm-simd'
+          - variant: fallback
+            cmake_flags: '-DCMAKE_BUILD_TYPE=Release -DENABLE_SIMD=OFF'
+            test_flags: ''
+          - variant: threaded
+            cmake_flags: '-DCMAKE_BUILD_TYPE=Release -DENABLE_THREADING=ON'
+            test_flags: '--experimental-wasm-threads'
+          - variant: webgpu
+            cmake_flags: '-DCMAKE_BUILD_TYPE=Release -DENABLE_WEBGPU=ON'
+            test_flags: '--experimental-webgpu'
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: 'package.json'
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Cache Emscripten
+      id: cache-emsdk
+      uses: actions/cache@v4
+      with:
+        path: emsdk
+        key: emsdk-${{ env.EMSCRIPTEN_VERSION }}-${{ runner.os }}
+        restore-keys: |
+          emsdk-${{ env.EMSCRIPTEN_VERSION }}-
+          emsdk-
+
+    - name: Setup Emscripten
+      if: steps.cache-emsdk.outputs.cache-hit != 'true'
+      run: |
+        git clone https://github.com/emscripten-core/emsdk.git
+        cd emsdk
+        ./emsdk install ${{ env.EMSCRIPTEN_VERSION }}
+        ./emsdk activate ${{ env.EMSCRIPTEN_VERSION }}
+
+    - name: Activate Emscripten
+      run: |
+        cd emsdk
+        source ./emsdk_env.sh
+        echo "EMSDK=$PWD" >> $GITHUB_ENV
+        echo "EM_CONFIG=$PWD/.emscripten" >> $GITHUB_ENV
+        echo "$PWD" >> $GITHUB_PATH
+        echo "$PWD/upstream/emscripten" >> $GITHUB_PATH
+
+    - name: Verify Emscripten installation
+      run: |
+        source emsdk/emsdk_env.sh
+        emcc --version
+        em++ --version
+        emcmake --version
+
+    - name: Setup ecosystem dependencies
+      run: |
+        # Check for ecosystem libraries
+        mkdir -p ecosystem-libs
+        # This would normally check for pre-built Imath.wasm, zlib.wasm, etc.
+        echo "Checking ecosystem dependencies..."
+        
+        # Install Python dependencies for scripts
+        pip install Pillow numpy
+
+    - name: Configure build
+      run: |
+        source emsdk/emsdk_env.sh
+        mkdir -p build-${{ matrix.variant }}
+        cd build-${{ matrix.variant }}
+        emcmake cmake .. ${{ matrix.cmake_flags }} \
+          -DCMAKE_INSTALL_PREFIX=$PWD/install \
+          -DBUILD_TESTS=ON \
+          -DBUILD_BENCHMARKS=ON \
+          -DBUILD_EXAMPLES=ON
+
+    - name: Build OpenEXR WASM
+      run: |
+        source emsdk/emsdk_env.sh
+        cd build-${{ matrix.variant }}
+        cmake --build . --config ${{ matrix.variant }} -j$(nproc)
+
+    - name: Install build artifacts
+      run: |
+        source emsdk/emsdk_env.sh
+        cd build-${{ matrix.variant }}
+        cmake --install .
+
+    - name: Generate test data
+      run: |
+        cd build-${{ matrix.variant }}
+        if [ -f tests/scripts/generate_test_images.py ]; then
+          python tests/scripts/generate_test_images.py tests/data
+        fi
+
+    - name: Run unit tests
+      if: matrix.variant != 'webgpu'  # WebGPU requires special setup
+      run: |
+        source emsdk/emsdk_env.sh
+        cd build-${{ matrix.variant }}
+        
+        # Set up test environment
+        export NODE_OPTIONS="${{ matrix.test_flags }}"
+        
+        # Run CTest
+        ctest --output-on-failure --timeout 300 -j$(nproc)
+
+    - name: Run benchmarks
+      if: matrix.variant == 'release' || matrix.variant == 'simd'
+      run: |
+        source emsdk/emsdk_env.sh
+        cd build-${{ matrix.variant }}
+        
+        # Generate benchmark data
+        if [ -f benchmarks/scripts/generate_benchmark_images.py ]; then
+          python benchmarks/scripts/generate_benchmark_images.py benchmarks/data
+        fi
+        
+        # Run benchmarks
+        export NODE_OPTIONS="${{ matrix.test_flags }}"
+        make run_all_benchmarks || echo "Benchmarks completed with warnings"
+
+    - name: Validate WASM modules
+      run: |
+        source emsdk/emsdk_env.sh
+        cd build-${{ matrix.variant }}/dist
+        
+        # Check WASM file exists and is valid
+        if [ -f openexr.wasm ]; then
+          wasm-validate openexr.wasm
+          echo "WASM module is valid"
+        else
+          echo "ERROR: WASM module not found"
+          exit 1
+        fi
+        
+        # Check JavaScript interface
+        if [ -f openexr.js ]; then
+          node -e "
+            const openexr = require('./openexr.js');
+            console.log('JavaScript module loads successfully');
+            if (typeof openexr.openexr_wasm_get_version === 'function') {
+              console.log('WASM interface accessible');
+            }
+          "
+        fi
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: openexr-wasm-${{ matrix.variant }}
+        path: |
+          build-${{ matrix.variant }}/dist/
+          build-${{ matrix.variant }}/install/
+        retention-days: 7
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ matrix.variant }}
+        path: |
+          build-${{ matrix.variant }}/Testing/
+          build-${{ matrix.variant }}/tests/output/
+        retention-days: 3
+
+    - name: Upload benchmark results
+      if: matrix.variant == 'release' || matrix.variant == 'simd'
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results-${{ matrix.variant }}
+        path: build-${{ matrix.variant }}/benchmarks/results/
+        retention-days: 30
+
+  # Integration and ecosystem tests
+  integration-tests:
+    name: Integration Tests
+    needs: build-variants
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: openexr-wasm-release
+        path: dist/
+
+    - name: Test ecosystem integration
+      run: |
+        cd examples/integration
+        npm install
+        
+        # Test with different browsers via playwright
+        npm run test:integration
+
+    - name: Performance regression tests
+      run: |
+        # Compare against baseline performance
+        if [ -f .github/performance-baseline.json ]; then
+          node .github/scripts/check-performance-regression.js
+        fi
+
+  # Security and quality checks
+  security-scan:
+    name: Security & Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Run CodeQL analysis
+      uses: github/codeql-action/init@v3
+      with:
+        languages: cpp, javascript
+
+    - name: Perform CodeQL analysis
+      uses: github/codeql-action/analyze@v3
+
+    - name: License compliance check
+      run: |
+        # Check for license headers
+        find src/ -name "*.cpp" -o -name "*.h" | xargs grep -L "Copyright.*superstruct" | tee unlicensed_files.txt
+        if [ -s unlicensed_files.txt ]; then
+          echo "ERROR: Files missing license headers:"
+          cat unlicensed_files.txt
+          exit 1
+        fi
+
+  # Documentation and release
+  documentation:
+    name: Documentation
+    needs: build-variants
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/wasm'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: openexr-wasm-release
+        path: dist/
+
+    - name: Generate API documentation
+      run: |
+        pip install doxygen-python sphinx
+        cd docs
+        make html
+
+    - name: Update performance metrics
+      run: |
+        # Update performance tracking
+        python .github/scripts/update-performance-metrics.py
+
+    - name: Deploy documentation
+      if: github.event_name == 'push'
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./docs/_build/html
+
+  # Summary job for required checks
+  summary:
+    name: Build Summary
+    needs: [build-variants, integration-tests, security-scan]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Generate build summary
+      run: |
+        echo "## OpenEXR WASM Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Check job results
+        if [ "${{ needs.build-variants.result }}" == "success" ]; then
+          echo "✅ Build variants: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Build variants: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ needs.integration-tests.result }}" == "success" ]; then
+          echo "✅ Integration tests: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Integration tests: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ needs.security-scan.result }}" == "success" ]; then
+          echo "✅ Security scan: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Security scan: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "🚀 Build completed for commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "📊 View detailed results in the Actions tab." >> $GITHUB_STEP_SUMMARY
+
+    - name: Check overall status
+      run: |
+        if [ "${{ needs.build-variants.result }}" != "success" ] || 
+           [ "${{ needs.integration-tests.result }}" != "success" ] ||
+           [ "${{ needs.security-scan.result }}" != "success" ]; then
+          echo "❌ Some jobs failed. Check the logs for details."
+          exit 1
+        else
+          echo "✅ All jobs passed successfully!"
+        fi

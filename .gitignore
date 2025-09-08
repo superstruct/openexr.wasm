@@ -64,3 +64,29 @@ __pycache__/
 # Ignore Bazel generated files
 bazel-* 
 MODULE.bazel.lock
+
+# WASM build artifacts
+build/
+build-*/
+dist/
+install/
+install-*/
+wasm/*.wasm
+wasm/*.js
+wasm/*.js.mem
+wasm/*.js.symbols
+wasm/*.js.temp
+node_modules/
+package-lock.json
+yarn.lock
+
+# WASM-specific temporary files
+*.wast
+*.wat
+benchmark-report-*.json
+test-results/
+
+# CI/CD artifacts
+build-logs/
+emsdk/
+emsdk_env.sh

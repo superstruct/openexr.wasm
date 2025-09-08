@@ -1,0 +1,156 @@
+/* config.h.in for OpenEXR WASM build */
+#ifndef OPENEXR_WASM_CONFIG_H
+#define OPENEXR_WASM_CONFIG_H
+
+/* Define if building for WASM */
+#define EMSCRIPTEN 1
+
+/* OpenEXR version info */
+#define OPENEXR_VERSION_MAJOR @CMAKE_PROJECT_VERSION_MAJOR@
+#define OPENEXR_VERSION_MINOR @CMAKE_PROJECT_VERSION_MINOR@
+#define OPENEXR_VERSION_PATCH @CMAKE_PROJECT_VERSION_PATCH@
+#define OPENEXR_VERSION_STRING "@CMAKE_PROJECT_VERSION@"
+
+/* Define if SIMD is enabled */
+#cmakedefine OPENEXR_WASM_SIMD_ENABLED
+
+/* Define if threading is enabled */
+#cmakedefine OPENEXR_ENABLE_THREADING
+
+/* Define if WebGPU is enabled */
+#cmakedefine OPENEXR_WEBGPU_ENABLED
+
+/* External dependencies */
+#cmakedefine HAVE_IMATH
+#cmakedefine HAVE_ZLIB
+#cmakedefine HAVE_DEFLATE
+#cmakedefine HAVE_OPENJPH
+
+/* Basic feature detection for WASM */
+#define HAVE_STDINT_H 1
+#define HAVE_INTTYPES_H 1
+#define HAVE_MEMORY_H 1
+#define HAVE_STDLIB_H 1
+#define HAVE_STRING_H 1
+#define HAVE_SYS_STAT_H 1
+#define HAVE_SYS_TYPES_H 1
+#define HAVE_UNISTD_H 1
+
+/* Math functions */
+#define HAVE_CEIL 1
+#define HAVE_FLOOR 1
+#define HAVE_SQRT 1
+#define HAVE_POW 1
+#define HAVE_FABS 1
+
+/* String functions */
+#define HAVE_STRCASECMP 1
+#define HAVE_STRNCASECMP 1
+#define HAVE_STRTOK_R 1
+
+/* Memory functions */
+#define HAVE_MEMMOVE 1
+#define HAVE_MEMSET 1
+
+/* C++ standard library features */
+#define HAVE_CXX11 1
+#define HAVE_CXX14 1
+#define HAVE_CXX17 1
+
+/* Disable problematic features for WASM */
+#undef HAVE_SYS_RESOURCE_H
+#undef HAVE_SYS_TIMES_H
+#undef HAVE_SYS_WAIT_H
+#undef HAVE_LANGINFO_CODESET
+#undef HAVE_LOCALE_H
+#undef HAVE_LC_MESSAGES
+#undef HAVE_LOCALTIME_R
+#undef HAVE_TIMEGM
+#undef HAVE_GMTIME_R
+
+/* Threading configuration */
+#ifdef OPENEXR_ENABLE_THREADING
+#define HAVE_PTHREAD_H 1
+#define HAVE_PTHREAD_MUTEX_TRYLOCK 1
+#define HAVE_PTHREAD_MUTEX_TIMEDLOCK 1
+#define HAVE_PTHREAD_COND_TIMEDWAIT 1
+#else
+#undef HAVE_PTHREAD_H
+#undef HAVE_PTHREAD_MUTEX_TRYLOCK
+#undef HAVE_PTHREAD_MUTEX_TIMEDLOCK
+#undef HAVE_PTHREAD_COND_TIMEDWAIT
+#endif
+
+/* File system - WASM virtual filesystem */
+#define HAVE_DIRENT_H 1
+#define HAVE_SYS_STAT_H 1
+#undef HAVE_SYS_STATVFS_H
+#undef HAVE_SYS_VFS_H
+#undef HAVE_SYS_MOUNT_H
+#undef HAVE_MNTENT_H
+#undef HAVE_FSTAB_H
+
+/* Network - disabled in WASM */
+#undef HAVE_SYS_SOCKET_H
+#undef HAVE_NETINET_IN_H
+#undef HAVE_ARPA_INET_H
+#undef HAVE_NETDB_H
+
+/* Process management - not available in WASM */
+#undef HAVE_SYS_WAIT_H
+#undef HAVE_PWD_H
+#undef HAVE_GRP_H
+
+/* OpenEXR specific configurations */
+#define OPENEXR_PACKAGE_NAME "OpenEXR"
+#define OPENEXR_VERSION_API "3_2"
+
+/* Namespace configurations */
+#define OPENEXR_IMF_NAMESPACE Imf
+#define OPENEXR_INTERNAL_IMF_NAMESPACE Imf_3_2
+#define IEX_NAMESPACE Iex
+#define IEX_INTERNAL_NAMESPACE Iex_3_2
+
+#ifdef OPENEXR_ENABLE_THREADING
+#define ILMTHREAD_NAMESPACE IlmThread
+#define ILMTHREAD_INTERNAL_NAMESPACE IlmThread_3_2
+#endif
+
+/* Compression support */
+#define OPENEXR_ZIP_COMPRESSION 1
+#define OPENEXR_PIZ_COMPRESSION 1
+#define OPENEXR_PXR24_COMPRESSION 1
+#define OPENEXR_B44_COMPRESSION 1
+#define OPENEXR_DWA_COMPRESSION 1
+
+#ifdef HAVE_OPENJPH
+#define OPENEXR_JPEG_COMPRESSION 1
+#else
+#undef OPENEXR_JPEG_COMPRESSION
+#endif
+
+/* SIMD configuration */
+#ifdef OPENEXR_WASM_SIMD_ENABLED
+#define OPENEXR_IMF_HAVE_SSE2 1
+#define OPENEXR_IMF_HAVE_SSE4_1 1
+#define __wasm_simd128__ 1
+#else
+#undef OPENEXR_IMF_HAVE_SSE2
+#undef OPENEXR_IMF_HAVE_SSE4_1
+#endif
+
+/* Memory alignment */
+#define OPENEXR_DEFAULT_ZIP_COMPRESSION_LEVEL 6
+
+/* WASM-specific paths */
+#define OPENEXR_WASM_CACHE_DIR "/openexr-cache"
+#define OPENEXR_WASM_TEMP_DIR "/tmp"
+
+/* WebGPU configuration */
+#ifdef OPENEXR_WEBGPU_ENABLED
+#define OPENEXR_WEBGPU_COMPUTE_SHADERS 1
+#else
+#undef OPENEXR_WEBGPU_COMPUTE_SHADERS
+#endif
+
+#endif /* OPENEXR_WASM_CONFIG_H */
